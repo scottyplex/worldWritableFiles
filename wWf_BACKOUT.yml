@@ -1,0 +1,41 @@
+---
+- name: Backout World-Writable File Remediation
+  hosts: VSPM_WWW_Backout
+
+  vars_prompt:
+    - name: backup_file
+      prompt: "Enter the path to the backup file containing original permissions (e.g., /tmp/permissions_backup.json):"
+      default: "/tmp/world_writable_permissions_backup.json"
+      private: false
+
+  tasks:
+    - name: Read original permissions from backup file
+      local_action:
+        module: file
+        path: "{{ backup_file }}"
+        read: true
+      register: original_permissions_data
+
+    - name: Parse JSON permission data
+      set_fact:
+        original_permissions: "{{ original_permissions_data.content | from_json }}"
+      when: original_permissions_data.content is defined
+
+    - name: Restore original file permissions
+      file:
+        path: "{{ item.stat.path }}"
+        mode: "{{ item.stat.mode }}"
+        owner: "{{ item.stat.pw_name | default(omit) }}"
+        group: "{{ item.stat.gr_name | default(omit) }}"
+      loop: "{{ original_permissions }}"
+      when: original_permissions is defined and original_permissions | length > 0
+
+    - name: Report - Permissions restoration complete
+      debug:
+        msg: "Original permissions have been restored."
+      when: original_permissions is defined and original_permissions | length > 0
+
+    - name: Report - Backup file not found or empty
+      debug:
+        msg: "Warning: Backup file not found or empty. Cannot restore permissions."
+      when: original_permissions is not defined or original_permissions | length == 0

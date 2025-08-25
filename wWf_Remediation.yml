@@ -1,0 +1,63 @@
+---
+- name: Remediate World-Writable Files with Backup
+  hosts: VSPM_WWW_Remediation
+  
+  vars_prompt:
+    - name: target_directory
+      prompt: "Enter the directory to scan for world-writable files (leave empty for the entire filesystem):"
+      default: "/"
+      private: false
+    - name: files_to_fix
+      prompt: "Enter specific files to fix (comma-separated, leave empty to fix all found):"
+      default: ""
+      private: false
+    - name: backup_file
+      prompt: "Enter the path to the backup file to store original permissions (e.g., /tmp/permissions_backup.json):"
+      default: "/tmp/world_writable_permissions_backup.json"
+      private: false
+
+  tasks:
+    - name: Find world-writable files and gather facts
+      find:
+        paths: "{{ target_directory }}"
+        permissions: "o=w"
+        recurse: true
+      register: world_writable_files
+      delegate_to: localhost # Run locally to collect all server data
+
+    - name: Filter specific files if provided
+      set_fact:
+        world_writable_files:
+          files: "{{ world_writable_files.files | selectattr('path', 'in', files_to_fix.split(',')) | list }}"
+      when: files_to_fix != "" and world_writable_files is defined
+
+    - name: Gather original file permissions
+      stat:
+        path: "{{ item._raw_params }}"
+      loop: "{{ world_writable_files.files | map(attribute='path') | list }}"
+      register: original_permissions
+
+    - name: Create backup of original permissions
+      local_action:
+        module: file
+        path: "{{ backup_file }}"
+        content: "{{ original_permissions | to_json }}"
+        mode: 0600
+      when: world_writable_files.files | length > 0
+
+    - name: Debug - List found world-writable files
+      debug:
+        var: world_writable_files.files
+      when: world_writable_files.files | length > 0
+
+    - name: Set correct permissions on world-writable files
+      file:
+        path: "{{ item.path }}"
+        mode: o-w
+      loop: "{{ world_writable_files.files }}"
+      when: world_writable_files.files | length > 0
+
+    - name: Report - No world-writable files found
+      debug:
+        msg: "No world-writable files found in the specified directory."
+      when: world_writable_files.files | length == 0
